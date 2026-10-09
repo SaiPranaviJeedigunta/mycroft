@@ -417,6 +417,19 @@
         3036,
         1568
       ]
+    },
+    {
+      "id": "c7e4b2a1-9f6d-4b3a-8e1c-5a7d9f2b4e6c",
+      "name": "Layer 2 - LLM Source Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1808,
+        1420
+      ],
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst OLLAMA_URL = 'http://localhost:11434/api/generate';\nconst OLLAMA_MODEL = 'llama3.2:3b'; // matches Regulatory_QA's existing convention (backend/app/config.py)\n\nconst VALID_CATEGORIES = [\n  'SEC Press Releases',\n  'FINRA Enforcement News',\n  'CFTC Regulations',\n  'Investment Advisor Rules',\n  'Unknown Source',\n];\n\nconst PROMPT_TEMPLATE = (title) => `You are classifying a news headline into exactly one financial-regulatory source category, based ONLY on its likely subject matter.\n\nCategories:\n- \"SEC Press Releases\": securities markets, public companies, exchanges, insider trading\n- \"FINRA Enforcement News\": broker-dealers, registered reps, FINRA rules/enforcement\n- \"CFTC Regulations\": commodities, derivatives, futures, swaps\n- \"Investment Advisor Rules\": registered investment advisers (RIAs), fiduciary duty, advisory compliance\n- \"Unknown Source\": genuinely does not fit any category above, or is too generic/ambiguous to tell\n\nHeadline: \"${title}\"\n\nReply with ONLY the exact category string, nothing else.`;\n\nasync function callOllama(prompt) {\n  const response = await fetch(OLLAMA_URL, {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({\n      model: OLLAMA_MODEL,\n      prompt,\n      stream: false,\n      options: { temperature: 0.1, num_predict: 20 },\n    }),\n  });\n  if (!response.ok) {\n    throw new Error(`Ollama returned ${response.status}`);\n  }\n  const result = await response.json();\n  // The model sometimes wraps its answer in quotes despite the prompt \u2014 strip\n  // surrounding quotes/whitespace before validating against VALID_CATEGORIES.\n  return result.response.trim().replace(/^[\"']|[\"']$/g, '');\n}\n\nconst results = [];\nlet llmSeen = 0;\nlet llmResolved = 0;\nlet llmErrors = 0;\n\n// Sequential, not parallelized (same deliberate choice as Layer 2 LLM\n// Re-Score and the B3 Google News unwrap: one local model instance, no\n// benefit to bursty parallel calls).\nfor (const item of items) {\n  const json = item.json;\n\n  // Only spend an LLM call on items the keyword/pattern classifier in\n  // Normalize Data already gave up on \u2014 every other item is left completely\n  // untouched by this step.\n  if (json.source_feed === 'Unknown Source') {\n    llmSeen++;\n    try {\n      const candidate = await callOllama(PROMPT_TEMPLATE(json.title));\n      const isValid = VALID_CATEGORIES.includes(candidate);\n      const resolved = isValid && candidate !== 'Unknown Source';\n      if (resolved) llmResolved++;\n      results.push({\n        json: {\n          ...json,\n          source_feed: isValid ? candidate : json.source_feed,\n          llm_source_classified: resolved,\n        },\n      });\n      continue;\n    } catch (e) {\n      // Fail open: on any Ollama/network/parse error, the item keeps its\n      // original 'Unknown Source' classification exactly as it would have\n      // before this step existed \u2014 a broken classification call never\n      // blocks or breaks the run (same principle as Layer 2 LLM Re-Score\n      // and the B3 Google News unwrap).\n      llmErrors++;\n      results.push({\n        json: {\n          ...json,\n          llm_source_classified: false,\n          llm_source_error: String(e.message || e),\n        },\n      });\n      continue;\n    }\n  }\n\n  // Already classified by keyword/pattern rules \u2014 no LLM call needed.\n  results.push({ json: { ...json, llm_source_classified: false } });\n}\n\nconsole.log(`Layer 2 LLM source classification: ${llmSeen} unresolved items reviewed, ${llmResolved} resolved, ${llmErrors} errors (fail-open, left as Unknown Source)`);\n\nreturn results;\n"
+      }
     }
   ],
   "connections": {
@@ -490,7 +503,7 @@
       "main": [
         [
           {
-            "node": "Filter Valid Content",
+            "node": "Layer 2 - LLM Source Classification",
             "type": "main",
             "index": 0
           }
@@ -656,6 +669,17 @@
         [
           {
             "node": "If2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Layer 2 - LLM Source Classification": {
+      "main": [
+        [
+          {
+            "node": "Filter Valid Content",
             "type": "main",
             "index": 0
           }
