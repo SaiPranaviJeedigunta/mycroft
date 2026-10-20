@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException
 from typing import Optional, List
 from datetime import datetime
-from app.models import FeedListResponse, Feed, FetchTriggerResponse, SourceFeed, ImpactLevel
+from app.models import FeedListResponse, Feed, FetchTriggerResponse, ImpactLevel
 from app.crud import FeedCRUD
 import httpx
 from app.config import get_settings
@@ -100,7 +100,7 @@ async def get_recent_feeds(
 
 @router.get("/list", response_model=FeedListResponse)
 async def list_feeds(
-    source_feed: Optional[SourceFeed] = None,
+    source_feed: Optional[str] = None,
     min_urgency: Optional[int] = Query(None, ge=1, le=10),
     max_urgency: Optional[int] = Query(None, ge=1, le=10),
     impact_level: Optional[ImpactLevel] = None,
@@ -122,7 +122,7 @@ async def list_feeds(
     """
     try:
         result = FeedCRUD.list_feeds(
-            source_feed=source_feed.value if source_feed else None,
+            source_feed=source_feed,
             min_urgency=min_urgency,
             max_urgency=max_urgency,
             impact_level=impact_level.value if impact_level else None,
