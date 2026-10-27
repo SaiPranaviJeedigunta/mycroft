@@ -231,3 +231,17 @@ workflow changes.
 - **Outputs:** Updated `scripts/regulatory-intel/workflow.dev.json` (`Generate Email` node); `scripts/regulatory-intel/B6-VERIFICATION.md`.
 - **Result:** B6 closed. A single urgent/critical filing — the exact scenario this alert path exists to catch — no longer silently fails to generate an email. No regression on the 0-item or 2+-item cases, both already correct before this fix.
 - **Open issues:** None identified for this specific node. The now-still-unreachable `newItems.length === 0` dead-code check two lines below the fix was left in place (harmless, not worth touching in a minimal one-line fix). The `Regulatory_QA` `SourceFeed` enum / `source_feed` compatibility gap flagged during this week's investigation (identified but not yet fixed) remains open for a future week.
+
+## 2026-10-27 -- Project 29 regulatory workflow: C3 fix (Layer 2 LLM's corrected severity discarded)
+
+- **Recipe:** Project 29 regulatory intelligence hardening, new investigation this week (not a named `FINDINGS.md` item) — re-read `RUN_LOG.md`/`FINDINGS.md` for the known-fixed list, diffed `main` against `feature/regulatory-intelligence-hardening` to avoid re-finding anything already fixed, then traced every consumer of C2's `llm_corrected_impact_level` field.
+- **Inputs:** `scripts/regulatory-intel/workflow.dev.json` (`Layer 2 - LLM Re-Score`, `Generate Email` nodes).
+- **Commands / actions:**
+  - Found `Generate Email` buckets/counts items into Critical/High sections using only the keyword scorer's original `impact_level`, never `llm_corrected_impact_level` — confirmed via grep that the field is written in exactly one place (`Layer 2 - LLM Re-Score`) and read nowhere in the repo.
+  - Built a live Node.js harness running the exact extracted `jsCode` from `Generate Email` against a 3-item batch covering every real case (LLM-confirmed-but-recategorized, LLM-confirmed-unchanged, never-reviewed) — confirmed the bug for real: the recategorized item (Critical -> High per the LLM) stayed counted as Critical before the fix.
+  - Fixed: added an `effectiveImpact()` helper preferring `llm_corrected_impact_level` when `llm_reviewed` is true, falling back to `impact_level` otherwise; `criticalItems`/`highItems` now filter on this instead of the raw field.
+  - Re-ran the same harness against the real patched file on disk — recategorized item now counted High; unchanged and never-reviewed items unaffected (no regression).
+  - Ran `node scripts/conformance.mjs scripts/regulatory-intel/workflow.dev.json` — valid JSON, passes.
+- **Outputs:** Updated `scripts/regulatory-intel/workflow.dev.json` (`Generate Email` node); `scripts/regulatory-intel/C3-VERIFICATION.md`.
+- **Result:** C3 closed. The Layer 2 LLM review's severity correction (C2's stated purpose) now actually affects the alert email's bucketing/counts for the first time since C2 shipped, instead of being computed and silently discarded.
+- **Open issues:** A related, separate defect was also found this week in `Regulatory_QA/backend/app/crud.py`'s `get_stats()` — dashboard stats re-bucket by raw `urgency_score` with cutoffs that disagree with the `impact_level` column every other part of the system relies on (57/411 real rows land in a different tier in the stats than their own `impact_level` says). Not fixed this week; candidate for a future week.
